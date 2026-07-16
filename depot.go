@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/bsm/bfs"
 )
@@ -44,6 +45,9 @@ type Status struct {
 	RemoteVersion int64
 	// NumItems returns the number of items processed, either read of written.
 	NumItems int64
+	// Start is the wall-clock time the sync began; callbacks can derive the
+	// elapsed time with time.Since(Start).
+	Start time.Time
 }
 
 func skipSync(srcVersion, targetVersion int64) bool {

@@ -43,6 +43,11 @@ Public API (the part that matters):
 - `Subscribe[T]` decodes into a freshly-allocated `*T` per item and yields
   `iter.Seq[*T]`. This is deliberate: proto messages must not be copied by value
   (copylocks), and per-item allocation lets `build` retain pointers safely.
+- Cancellation is first-class but Close is the subscription's lifecycle trigger:
+  the Subscribe loop ctx is deliberately NOT derived from the caller's ctx —
+  Close cancels it, aborting in-flight syncs. Decode/emit loops check ctx
+  between items, and Produce never commits after cancellation. Preserve these
+  guarantees when changing the sync paths.
 
 ## Testing
 

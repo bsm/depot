@@ -74,9 +74,16 @@ user := sub.Load()[42]
 
 `Load` returns the last successfully built snapshot, swapped atomically on each
 refresh. A refresh that finds no new version is skipped; one that fails to
-decode or build leaves the previous snapshot in place (register `OnError` to
-observe background failures). Pass `every == 0` for a one-shot load with no
-background loop, and call `Refresh` to poll on demand.
+decode or build leaves the previous snapshot in place. Register `OnSync` to
+instrument background refreshes (each `Status` carries a `Start` time) and
+`OnError` to observe background failures. Pass `every == 0` for a one-shot load
+with no background loop, and call `Refresh` to poll on demand.
+
+The `ctx` passed to `Subscribe` applies to the initial load only; the
+subscription's lifecycle belongs to `Close`, which stops the refresh loop and
+aborts any in-flight sync — so shutdown (e.g. on SIGTERM) is never blocked by
+a slow read. Cancelling the `ctx` passed to `Produce` aborts between items and
+a partial snapshot is never committed.
 
 ## Versions & skipping
 

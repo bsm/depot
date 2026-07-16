@@ -5,6 +5,7 @@ import (
 	"io"
 	"iter"
 	"net/url"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -12,6 +13,21 @@ import (
 	"github.com/bsm/depot"
 	"github.com/bsm/depot/internal/testdata"
 )
+
+// checkStatus asserts got matches exp, after verifying Start was populated and
+// clearing it (Start is a wall-clock time and not comparable by value).
+func checkStatus(t *testing.T, got, exp *depot.Status) {
+	t.Helper()
+	if got != nil {
+		if got.Start.IsZero() {
+			t.Error("expected Start to be set")
+		}
+		got.Start = exp.Start
+	}
+	if !reflect.DeepEqual(exp, got) {
+		t.Errorf("expected %#v, got %#v", exp, got)
+	}
+}
 
 func TestFetchRemoteVersion(t *testing.T) {
 	write := func(t *testing.T, meta bfs.Metadata) *bfs.Object {
