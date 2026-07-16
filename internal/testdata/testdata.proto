@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package depot.internal.testdata;
+option go_package = "github.com/bsm/depot/internal/testdata";
+
+enum MockEnum {
+  UNKNOWN = 0;
+  FIRST = 3;
+}
+
+message MockMessage {
+  string name = 1;
+  MockEnum enum = 2;
+  uint32 height = 3;
+}
