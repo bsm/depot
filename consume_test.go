@@ -1,8 +1,10 @@
 package depot_test
 
 import (
-	"reflect"
+	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/bsm/depot"
 )
@@ -33,9 +35,7 @@ func TestSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatal("unexpected error", err)
 		}
-		if exp := (&depot.Status{LocalVersion: 101, RemoteVersion: 101, Skipped: true}); !reflect.DeepEqual(exp, status) {
-			t.Errorf("expected %#v, got %#v", exp, status)
-		}
+		checkStatus(t, status, &depot.Status{LocalVersion: 101, RemoteVersion: 101, Skipped: true})
 	})
 
 	t.Run("always if no version", func(t *testing.T) {
@@ -55,9 +55,7 @@ func TestSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatal("unexpected error", err)
 		}
-		if exp := (&depot.Status{NumItems: 2}); !reflect.DeepEqual(exp, status) {
-			t.Errorf("expected %#v, got %#v", exp, status)
-		}
+		checkStatus(t, status, &depot.Status{NumItems: 2})
 	})
 
 	t.Run("without initial sync", func(t *testing.T) {
@@ -86,6 +84,66 @@ func TestSubscribe(t *testing.T) {
 		}
 		if !sub.Ready() {
 			t.Error("expected ready after refresh")
+		}
+		if exp, got := 2, len(sub.Load()); exp != got {
+			t.Errorf("expected %v, got %v", exp, got)
+		}
+	})
+
+	t.Run("OnSync instrumentation", func(t *testing.T) {
+		const url = "mem://subscribe-onsync/file.json"
+		if err := seedStore(url, 2, 101); err != nil {
+			t.Fatal("unexpected error", err)
+		}
+
+		synced := make(chan *depot.Status, 16)
+		sub, err := depot.Subscribe(t.Context(), url, time.Millisecond, collectMessages,
+			depot.OnSync(func(s *depot.Status) { synced <- s }))
+		if err != nil {
+			t.Fatal("unexpected error", err)
+		}
+		defer func() { _ = sub.Close() }()
+
+		// the remote is unchanged since the initial load, so the first background
+		// refresh is a skip — and it carries a populated Start
+		select {
+		case st := <-synced:
+			if !st.Skipped {
+				t.Errorf("expected skipped, got %+v", st)
+			}
+			if st.Start.IsZero() {
+				t.Error("expected Start to be set")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("OnSync was not called")
+		}
+	})
+
+	t.Run("aborts on ctx cancel", func(t *testing.T) {
+		const url = "mem://subscribe-cancel/file.json"
+		if err := seedStore(url, 2, 101); err != nil {
+			t.Fatal("unexpected error", err)
+		}
+
+		sub, err := depot.Subscribe(t.Context(), url, 0, collectMessages)
+		if err != nil {
+			t.Fatal("unexpected error", err)
+		}
+		defer func() { _ = sub.Close() }()
+
+		// a newer version is available, but the caller's ctx is cancelled:
+		// the refresh must abort mid-decode and keep the previous snapshot
+		if err := seedStore(url, 4, 202); err != nil {
+			t.Fatal("unexpected error", err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		if _, err := sub.Refresh(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+		if exp, got := int64(101), sub.Version(); exp != got {
+			t.Errorf("expected %v, got %v", exp, got)
 		}
 		if exp, got := 2, len(sub.Load()); exp != got {
 			t.Errorf("expected %v, got %v", exp, got)

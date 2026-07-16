@@ -20,6 +20,10 @@ import (
 // freshly-allocated *T) and returns the snapshot to publish; it should drain the
 // sequence. Use Load to read the most recent snapshot. A decode error or a build
 // error aborts the refresh and leaves the previous snapshot in place.
+//
+// ctx applies to the initial load only, not to the subscription's lifetime.
+// Close stops the refresh loop and aborts any in-flight sync, so a terminating
+// app (e.g. on SIGTERM) is never blocked by a slow read.
 func Subscribe[T, S any](ctx context.Context, url string, every time.Duration, build func(iter.Seq[*T]) (S, error), opts ...Option) (*Subscription[S], error) {
 	cfg := newConfig(opts)
 	sub := &Subscription[S]{cfg: cfg}
@@ -52,8 +56,12 @@ func Subscribe[T, S any](ctx context.Context, url string, every time.Duration, b
 	}
 
 	if every > 0 {
+		// deliberately not derived from the caller's ctx: the subscription is
+		// long-lived and Close is its lifecycle trigger. Close cancels this ctx,
+		// which aborts any in-flight background sync.
 		bg, cancel := context.WithCancel(context.Background())
 		sub.cancel = cancel
+		sub.wait.Add(1)
 		go sub.loop(bg, every)
 	}
 	return sub, nil
@@ -97,7 +105,8 @@ func (s *Subscription[S]) Ready() bool { return s.ready.Load() }
 // directly (e.g. from a webhook) to poll on demand.
 func (s *Subscription[S]) Refresh(ctx context.Context) (*Status, error) { return s.sync(ctx) }
 
-// Close stops background refreshes and releases the remote.
+// Close stops the background refresh loop, aborting any in-flight sync, and
+// releases the remote. It blocks until the loop has exited.
 func (s *Subscription[S]) Close() error {
 	if s.cancel != nil {
 		s.cancel()
@@ -121,7 +130,6 @@ func (s *Subscription[S]) Close() error {
 }
 
 func (s *Subscription[S]) loop(ctx context.Context, every time.Duration) {
-	s.wait.Add(1)
 	defer s.wait.Done()
 
 	ticker := time.NewTicker(every)
@@ -134,15 +142,25 @@ func (s *Subscription[S]) loop(ctx context.Context, every time.Duration) {
 		case <-ticker.C:
 		}
 
-		if _, err := s.sync(ctx); err != nil && s.cfg.onError != nil {
-			s.cfg.onError(err)
+		status, err := s.sync(ctx)
+		switch {
+		case err == nil:
+			if s.cfg.onSync != nil {
+				s.cfg.onSync(status)
+			}
+		case ctx.Err() != nil:
+			return // shutting down, not a real refresh failure
+		default:
+			if s.cfg.onError != nil {
+				s.cfg.onError(err)
+			}
 		}
 	}
 }
 
 func consumeInto[T, S any](ctx context.Context, sub *Subscription[S], cfg *config, build func(iter.Seq[*T]) (S, error)) (*Status, error) {
 	localVersion := sub.version.Load()
-	status := &Status{LocalVersion: localVersion}
+	status := &Status{LocalVersion: localVersion, Start: time.Now()}
 
 	remoteVersion, reader, err := sub.openReader(ctx, cfg)
 	if err != nil {
@@ -159,6 +177,12 @@ func consumeInto[T, S any](ctx context.Context, sub *Subscription[S], cfg *confi
 	var decErr error
 	seq := func(yield func(*T) bool) {
 		for {
+			// obey ctx between items: bfs reads are ctx-aware, but decoding
+			// buffered data is not and must not outlive a cancelled caller
+			if err := ctx.Err(); err != nil {
+				decErr = err
+				return
+			}
 			v := new(T)
 			switch err := reader.Decode(v); {
 			case errors.Is(err, io.EOF):

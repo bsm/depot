@@ -1,6 +1,8 @@
 package depot_test
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -47,6 +49,40 @@ func TestProduce(t *testing.T) {
 	}
 }
 
+func TestProduce_cancelled(t *testing.T) {
+	const url = "mem://produce-cancelled/file.json"
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	emitted := 0
+	_, err := depot.Produce(ctx, url, 101, func(emit func(*testdata.MockMessage) error) error {
+		for range 10 {
+			if err := emit(seed()); err != nil {
+				return err
+			}
+			emitted++
+		}
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if emitted != 0 {
+		t.Errorf("expected emit to abort immediately, emitted %d", emitted)
+	}
+
+	// nothing must have been committed
+	obj, err := bfs.NewObject(t.Context(), url)
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	defer obj.Close()
+	if _, err := obj.Head(t.Context()); !errors.Is(err, bfs.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func TestProduce_force(t *testing.T) {
 	const url = "mem://produce-force/file.json"
 
@@ -75,9 +111,7 @@ func testProduce(t *testing.T, url string, version int64, opts []depot.Option, e
 		t.Fatal("unexpected error", err)
 	}
 
-	if !reflect.DeepEqual(exp, status) {
-		t.Errorf("expected %#v, got %#v", exp, status)
-	}
+	checkStatus(t, status, exp)
 }
 
 func TestProduceIncremental(t *testing.T) {
@@ -123,9 +157,7 @@ func testProduceIncremental(t *testing.T, url string, version int64, exp *depot.
 		t.Fatal("unexpected error", err)
 	}
 
-	if !reflect.DeepEqual(exp, status) {
-		t.Errorf("expected %#v, got %#v", exp, status)
-	}
+	checkStatus(t, status, exp)
 }
 
 func mustBucket(t *testing.T, url string) bfs.Bucket {

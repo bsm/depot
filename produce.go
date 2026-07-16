@@ -2,6 +2,7 @@ package depot
 
 import (
 	"context"
+	"time"
 
 	"github.com/bsm/bfs"
 )
@@ -11,6 +12,7 @@ import (
 //
 // records is invoked once and should emit every item via the emit callback;
 // returning an error aborts the write and discards any partial output.
+// Cancelling ctx aborts between items and never commits a partial snapshot.
 func Produce[T any](ctx context.Context, url string, version int64, records func(emit func(T) error) error, opts ...Option) (*Status, error) {
 	obj, err := bfs.NewObject(ctx, url)
 	if err != nil {
@@ -19,7 +21,7 @@ func Produce[T any](ctx context.Context, url string, version int64, records func
 	defer obj.Close()
 
 	cfg := newConfig(opts)
-	status := &Status{LocalVersion: version}
+	status := &Status{LocalVersion: version, Start: time.Now()}
 
 	remoteVersion, err := fetchRemoteVersion(ctx, obj)
 	if err != nil {
@@ -35,7 +37,11 @@ func Produce[T any](ctx context.Context, url string, version int64, records func
 	w := NewWriter(ctx, obj, cfg.writerOptions(version))
 	defer w.Discard()
 
-	if err := records(func(v T) error { return w.Encode(v) }); err != nil {
+	if err := records(emitFunc[T](ctx, w)); err != nil {
+		return nil, err
+	}
+	// never commit a truncated snapshot for a cancelled caller
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := w.Commit(); err != nil {
@@ -63,7 +69,7 @@ func ProduceIncremental[T any](ctx context.Context, url string, version int64, r
 	obj := bfs.NewObjectFromBucket(bucket, manifestName)
 	defer obj.Close()
 
-	status := &Status{LocalVersion: version}
+	status := &Status{LocalVersion: version, Start: time.Now()}
 
 	mft, err := loadManifest(ctx, obj)
 	if err != nil {
@@ -85,7 +91,11 @@ func ProduceIncremental[T any](ctx context.Context, url string, version int64, r
 	w := NewWriter(ctx, dataObj, wopt)
 	defer w.Discard()
 
-	if err := records(mft.Version, func(v T) error { return w.Encode(v) }); err != nil {
+	if err := records(mft.Version, emitFunc[T](ctx, w)); err != nil {
+		return nil, err
+	}
+	// never commit a truncated snapshot for a cancelled caller
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := w.Commit(); err != nil {
@@ -100,6 +110,18 @@ func ProduceIncremental[T any](ctx context.Context, url string, version int64, r
 
 	status.NumItems = w.NumWritten()
 	return status, nil
+}
+
+// emitFunc wraps a writer into an emit callback that obeys ctx between items:
+// bfs writers may buffer locally until Commit, so a slow records loop would
+// otherwise never notice a cancelled caller.
+func emitFunc[T any](ctx context.Context, w *Writer) func(T) error {
+	return func(v T) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return w.Encode(v)
+	}
 }
 
 func writeManifest(ctx context.Context, obj *bfs.Object, mft *manifest, version int64) error {
