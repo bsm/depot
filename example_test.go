@@ -2,67 +2,91 @@ package depot_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"iter"
 	"time"
 
 	"github.com/bsm/depot"
-	"github.com/bsm/depot/internal/testdata"
 )
 
-type message = testdata.MockMessage
+// User is the record type exchanged in the examples. With an .ndjson URL every
+// record becomes one JSON line.
+type User struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
 
 func ExampleProduce() {
-	ctx := context.TODO()
+	ctx := context.Background()
 
-	status, err := depot.Produce(ctx, "mem://example-produce/todos.ndjson", 101,
-		func(emit func(*message) error) error {
-			return errors.Join(
-				emit(&message{Name: "Jane", Height: 175}),
-				emit(&message{Name: "Joe", Height: 172}),
-			)
-		})
+	users := []*User{
+		{ID: 1, Name: "Jane"},
+		{ID: 2, Name: "Joe"},
+	}
+	records := func(emit func(*User) error) error {
+		for _, u := range users {
+			if err := emit(u); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// version is any monotonic stamp that changes when the data changes,
+	// e.g. max(updated_at) as unix nanos.
+	const version = 101
+
+	status, err := depot.Produce(ctx, "mem://example-produce/users.ndjson", version, records)
 	if err != nil {
 		panic(err)
 	}
+	fmt.Printf("produced items:%d skipped:%v\n", status.NumItems, status.Skipped)
 
-	fmt.Printf("PRODUCED skipped:%v version:%v->%v items:%v\n", status.Skipped, status.LocalVersion, status.RemoteVersion, status.NumItems)
+	// running again with the same version skips the write entirely
+	status, err = depot.Produce(ctx, "mem://example-produce/users.ndjson", version, records)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("produced items:%d skipped:%v\n", status.NumItems, status.Skipped)
 
 	// Output:
-	// PRODUCED skipped:false version:101->0 items:2
+	// produced items:2 skipped:false
+	// produced items:0 skipped:true
 }
 
 func ExampleSubscribe() {
-	ctx := context.TODO()
+	ctx := context.Background()
+	const url = "mem://example-subscribe/users.ndjson"
 
-	const url = "mem://example-subscribe/todos.ndjson"
-	if _, err := depot.Produce(ctx, url, 101, func(emit func(*message) error) error {
-		return errors.Join(
-			emit(&message{Name: "Jane", Height: 175}),
-			emit(&message{Name: "Joe", Height: 172}),
-		)
+	// seed a snapshot for the example
+	if _, err := depot.Produce(ctx, url, 101, func(emit func(*User) error) error {
+		if err := emit(&User{ID: 1, Name: "Jane"}); err != nil {
+			return err
+		}
+		return emit(&User{ID: 2, Name: "Joe"})
 	}); err != nil {
 		panic(err)
 	}
 
-	// Subscribe loads the snapshot once and refreshes it every minute in the
-	// background. build turns the item stream into the value returned by Load.
+	// Subscribe loads the snapshot now and refreshes it every minute in the
+	// background. build turns the item stream into the value returned by Load;
+	// here it is a lookup map by ID.
 	sub, err := depot.Subscribe(ctx, url, time.Minute,
-		func(rows iter.Seq[*message]) ([]string, error) {
-			var names []string
-			for msg := range rows {
-				names = append(names, msg.Name)
+		func(rows iter.Seq[*User]) (map[int]*User, error) {
+			byID := make(map[int]*User)
+			for u := range rows {
+				byID[u.ID] = u
 			}
-			return names, nil
+			return byID, nil
 		})
 	if err != nil {
 		panic(err)
 	}
 	defer func() { _ = sub.Close() }()
 
-	fmt.Printf("COLLECTED version:%v names:%q\n", sub.Version(), sub.Load())
+	// hot path: lock-free read of the latest snapshot
+	fmt.Printf("version:%d user:%s\n", sub.Version(), sub.Load()[2].Name)
 
 	// Output:
-	// COLLECTED version:101 names:["Jane" "Joe"]
+	// version:101 user:Joe
 }

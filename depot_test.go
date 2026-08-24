@@ -14,6 +14,8 @@ import (
 	"github.com/bsm/depot/internal/testdata"
 )
 
+type message = testdata.MockMessage
+
 // checkStatus asserts got matches exp, after verifying Start was populated and
 // clearing it (Start is a wall-clock time and not comparable by value).
 func checkStatus(t *testing.T, got, exp *depot.Status) {

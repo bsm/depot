@@ -12,19 +12,23 @@ import (
 	"github.com/bsm/bfs"
 )
 
+// BuildFunc turns the decoded item stream into the snapshot published by a
+// Subscription - a slice, a lookup map, a prebuilt index. Each item is a
+// freshly-allocated *T, so the snapshot may retain the pointers. It should
+// drain the sequence; returning an error discards the result and keeps the
+// previous snapshot.
+type BuildFunc[T, S any] func(iter.Seq[*T]) (S, error)
+
 // Subscribe collects a snapshot from url and keeps it up to date. It performs an
 // initial synchronous load and, when every > 0, refreshes in the background on
 // that interval. Refreshes that find no new version are skipped cheaply.
 //
-// build is called on every change with the decoded item stream (each item a
-// freshly-allocated *T) and returns the snapshot to publish; it should drain the
-// sequence. Use Load to read the most recent snapshot. A decode error or a build
-// error aborts the refresh and leaves the previous snapshot in place.
+// build is called on every change; use Load to read the most recent snapshot.
 //
 // ctx applies to the initial load only, not to the subscription's lifetime.
 // Close stops the refresh loop and aborts any in-flight sync, so a terminating
 // app (e.g. on SIGTERM) is never blocked by a slow read.
-func Subscribe[T, S any](ctx context.Context, url string, every time.Duration, build func(iter.Seq[*T]) (S, error), opts ...Option) (*Subscription[S], error) {
+func Subscribe[T, S any](ctx context.Context, url string, every time.Duration, build BuildFunc[T, S], opts ...Option) (*Subscription[S], error) {
 	cfg := newConfig(opts)
 	sub := &Subscription[S]{cfg: cfg}
 
@@ -158,7 +162,7 @@ func (s *Subscription[S]) loop(ctx context.Context, every time.Duration) {
 	}
 }
 
-func consumeInto[T, S any](ctx context.Context, sub *Subscription[S], cfg *config, build func(iter.Seq[*T]) (S, error)) (*Status, error) {
+func consumeInto[T, S any](ctx context.Context, sub *Subscription[S], cfg *config, build BuildFunc[T, S]) (*Status, error) {
 	localVersion := sub.version.Load()
 	status := &Status{LocalVersion: localVersion, Start: time.Now()}
 
