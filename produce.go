@@ -7,13 +7,21 @@ import (
 	"github.com/bsm/bfs"
 )
 
+// RecordsFunc emits every item of a snapshot via the emit callback. It is
+// invoked once per Produce call; returning an error aborts the write and
+// discards any partial output.
+type RecordsFunc[T any] func(emit func(T) error) error
+
+// RecordsSinceFunc emits only the items changed since a previous remote
+// version. It is invoked once per ProduceIncremental call with that version;
+// returning an error aborts the write and discards any partial output.
+type RecordsSinceFunc[T any] func(since int64, emit func(T) error) error
+
 // Produce deposits a full snapshot at url under the given version. The write is
 // skipped when the remote is already at that version or newer, unless Force is set.
 //
-// records is invoked once and should emit every item via the emit callback;
-// returning an error aborts the write and discards any partial output.
 // Cancelling ctx aborts between items and never commits a partial snapshot.
-func Produce[T any](ctx context.Context, url string, version int64, records func(emit func(T) error) error, opts ...Option) (*Status, error) {
+func Produce[T any](ctx context.Context, url string, version int64, records RecordsFunc[T], opts ...Option) (*Status, error) {
 	obj, err := bfs.NewObject(ctx, url)
 	if err != nil {
 		return nil, err
@@ -58,7 +66,7 @@ func Produce[T any](ctx context.Context, url string, version int64, records func
 //
 // records receives the previous remote version so it can emit only the items
 // that changed since then.
-func ProduceIncremental[T any](ctx context.Context, url string, version int64, records func(since int64, emit func(T) error) error, opts ...Option) (*Status, error) {
+func ProduceIncremental[T any](ctx context.Context, url string, version int64, records RecordsSinceFunc[T], opts ...Option) (*Status, error) {
 	bucket, err := bfs.Connect(ctx, url)
 	if err != nil {
 		return nil, err
