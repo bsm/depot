@@ -139,11 +139,15 @@ func (s *Subscription[S]) loop(ctx context.Context, every time.Duration) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+	// A skipped initial sync is deferred, not dropped: the first iteration
+	// syncs immediately rather than a full interval later.
+	for first := s.cfg.skipInitial; ; first = false {
+		if !first {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
 
 		status, err := s.sync(ctx)
