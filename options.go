@@ -45,9 +45,11 @@ func Force() Option { return func(c *config) { c.force = true } }
 func WithIncremental() Option { return func(c *config) { c.incremental = true } }
 
 // WithoutInitialSync makes Subscribe return immediately without the synchronous
-// initial load. The snapshot is populated by the first background refresh (so it
-// only makes sense with every > 0) or by a manual Refresh. Use Ready to tell
-// whether a snapshot is available yet.
+// initial load; Subscribe then always succeeds. With every > 0 the background
+// loop runs the deferred first sync straight away (not an interval later), with
+// its outcome reported through OnSync/OnError like any refresh; with every == 0
+// a manual Refresh does it. Use Ready to tell whether a snapshot is available
+// yet.
 func WithoutInitialSync() Option { return func(c *config) { c.skipInitial = true } }
 
 // OnError registers a callback for errors from background Subscribe refreshes.

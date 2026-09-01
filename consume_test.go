@@ -182,3 +182,33 @@ func emitN(emit func(*message) error, n int) error {
 	}
 	return nil
 }
+
+func TestSubscribe_DeferredInitialSyncIsImmediate(t *testing.T) {
+	const url = "mem://subscribe-deferred/file.json"
+	if err := seedStore(url, 2, 101); err != nil {
+		t.Fatal("unexpected error", err)
+	}
+
+	// With an hour between ticks, only an immediate deferred sync can flip
+	// Ready within the deadline.
+	synced := make(chan struct{})
+	sub, err := depot.Subscribe(t.Context(), url, time.Hour, collectMessages,
+		depot.WithoutInitialSync(),
+		depot.OnSync(func(*depot.Status) { close(synced) }))
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	defer func() { _ = sub.Close() }()
+
+	select {
+	case <-synced:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deferred initial sync did not run immediately")
+	}
+	if !sub.Ready() {
+		t.Error("expected ready after the deferred initial sync")
+	}
+	if exp, got := 2, len(sub.Load()); exp != got {
+		t.Errorf("expected %v, got %v", exp, got)
+	}
+}
