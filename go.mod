@@ -7,7 +7,7 @@ require (
 	github.com/bsm/pbio v0.4.0
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/golang/protobuf v1.5.2
-	github.com/klauspost/compress v1.18.1
+	github.com/klauspost/compress v1.18.7
 	google.golang.org/protobuf v1.36.10
 )
 
