@@ -57,7 +57,7 @@ func WithoutInitialSync() Option { return func(c *config) { c.skipInitial = true
 func OnError(fn func(error)) Option { return func(c *config) { c.onError = fn } }
 
 // OnSync registers a callback invoked after each successful background Subscribe
-// refresh (including skipped ones) with its Status — useful for instrumentation.
+// refresh (including skipped ones) with its Status, for instrumentation.
 // The initial load and manual Refresh return their Status directly and do not
 // invoke this callback.
 func OnSync(fn func(*Status)) Option { return func(c *config) { c.onSync = fn } }

@@ -138,6 +138,14 @@ func init() {
 	})
 }
 
+// resetStore drops the mem:// bucket for host, so a test that depends on the
+// starting state also passes with -count > 1.
+func resetStore(host string) {
+	memMu.Lock()
+	defer memMu.Unlock()
+	delete(memBuckets, host)
+}
+
 // seedStore produces numEntries seed messages to url at the given version.
 func seedStore(url string, numEntries int, version int64) error {
 	_, err := depot.Produce(context.Background(), url, version,

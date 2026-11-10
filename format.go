@@ -69,7 +69,7 @@ func (*noFormat) NewEncoder(w io.Writer) (FormatEncoder, error) { return nil, er
 
 // --------------------------------------------------------------------
 
-// JSONFormat provides a Format implemention for JSON.
+// JSONFormat provides a Format implementation for JSON.
 var JSONFormat = jsonFormat{}
 
 type jsonFormat struct{}
@@ -94,7 +94,7 @@ func (jsonEncoderWrapper) Close() error { return nil }
 
 // --------------------------------------------------------------------
 
-// ProtobufFormat provides a Format implemention for Protobuf.
+// ProtobufFormat provides a Format implementation for Protobuf.
 var ProtobufFormat = protobufFormat{}
 
 type protobufFormat struct{}
@@ -148,7 +148,7 @@ func (*protobufWrapper) Close() error {
 
 // --------------------------------------------------------------------
 
-// CBORFormat provides a Format implemention for CBOR.
+// CBORFormat provides a Format implementation for CBOR.
 var CBORFormat = cborFormat{}
 
 type cborFormat struct{}

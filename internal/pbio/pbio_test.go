@@ -33,14 +33,14 @@ func TestEncoder(t *testing.T) {
 		t.Fatalf("expected no error, but got %v", err)
 	}
 	if exp, got, delta := 192, buf.Len(), 20; math.Abs(float64(exp)-float64(got)) > float64(delta) {
-		t.Fatalf("expected %d (±%d), got %d", exp, delta, got)
+		t.Fatalf("expected %d (+/-%d), got %d", exp, delta, got)
 	}
 
 	if err := enc.Encode(message); err != nil {
 		t.Fatalf("expected no error, but got %v", err)
 	}
 	if exp, got, delta := 384, buf.Len(), 20; math.Abs(float64(exp)-float64(got)) > float64(delta) {
-		t.Fatalf("expected %d (±%d), got %d", exp, delta, got)
+		t.Fatalf("expected %d (+/-%d), got %d", exp, delta, got)
 	}
 }
 

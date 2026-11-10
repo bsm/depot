@@ -10,7 +10,7 @@ import (
 	"github.com/bsm/bfs"
 )
 
-// WriterOptions configure the producer instance.
+// WriterOptions configure the writer instance.
 type WriterOptions struct {
 	// Format specifies the format
 	// Default: auto-detected from URL path.
@@ -20,7 +20,7 @@ type WriterOptions struct {
 	// Default: auto-detected from URL path.
 	Compression Compression
 
-	// Provides an optional version which is stored with the remote metadata.
+	// Version is stored with the remote metadata.
 	// Default: 0
 	Version int64
 }
@@ -45,6 +45,10 @@ type Writer struct {
 	cw io.WriteCloser // compression writer
 	ww *bufio.Writer
 	fe FormatEncoder
+
+	// done is set by the first Commit or Discard, so the usual deferred
+	// Discard after a Commit does not close the encoders a second time.
+	done bool
 }
 
 // NewWriter inits a new feed writer.
@@ -62,7 +66,7 @@ func NewWriter(ctx context.Context, remote *bfs.Object, opt *WriterOptions) *Wri
 	}
 }
 
-// Write write raw bytes to the feed.
+// Write writes raw bytes to the feed.
 func (w *Writer) Write(p []byte) (int, error) {
 	if err := w.ensureCreated(); err != nil {
 		return 0, err
@@ -70,7 +74,7 @@ func (w *Writer) Write(p []byte) (int, error) {
 	return w.ww.Write(p)
 }
 
-// WriteString write a raw string to the feed.
+// WriteString writes a raw string to the feed.
 func (w *Writer) WriteString(s string) (int, error) {
 	if err := w.ensureCreated(); err != nil {
 		return 0, err
@@ -105,8 +109,14 @@ func (w *Writer) NumWritten() int64 {
 	return w.num
 }
 
-// Discard closes the writer and discards the contents.
+// Discard closes the writer and discards the contents. It does nothing after
+// Commit.
 func (w *Writer) Discard() error {
+	if w.done {
+		return nil
+	}
+	w.done = true
+
 	err := w.close()
 	if w.bw != nil {
 		if e := w.bw.Discard(); e != nil {
@@ -116,8 +126,22 @@ func (w *Writer) Discard() error {
 	return err
 }
 
-// Commit closes the writer and persists the contents.
+// Commit closes the writer and persists the contents. A writer with nothing
+// written still creates the remote: an empty snapshot is a valid snapshot,
+// and without the object its version would never reach consumers.
 func (w *Writer) Commit() error {
+	if w.done {
+		return errors.New("depot: writer already closed")
+	}
+	w.done = true
+
+	if err := w.ensureCreated(); err != nil {
+		_ = w.close()
+		if w.bw != nil {
+			_ = w.bw.Discard()
+		}
+		return err
+	}
 	err := w.close()
 	if w.bw != nil {
 		if e := w.bw.Commit(); e != nil {
