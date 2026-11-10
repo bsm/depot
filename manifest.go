@@ -3,6 +3,7 @@ package depot
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 
 	"github.com/bsm/bfs"
@@ -40,7 +41,9 @@ func loadManifest(ctx context.Context, obj *bfs.Object) (*manifest, error) {
 	return m, nil
 }
 
-func newDataFileName(wopt *WriterOptions) string {
+// newDataFileName returns a name for a new data file at wopt.Version that is
+// not yet listed in m.Files.
+func (m *manifest) newDataFileName(wopt *WriterOptions) string {
 	formatExt := ".json"
 	switch wopt.Format {
 	case ProtobufFormat:
@@ -59,7 +62,17 @@ func newDataFileName(wopt *WriterOptions) string {
 		compressionSuffix = ".zst"
 	}
 
-	// The name depends only on the version, so a forced re-produce of the same
-	// version replaces its data file instead of adding a second one.
-	return "data-" + strconv.FormatInt(wopt.Version, 10) + formatExt + compressionSuffix
+	// A forced re-produce at a listed version gets a new name, never an
+	// existing one: the batch it would overwrite holds records that the new
+	// batch (built from changes since that version) does not repeat, and listing
+	// one name twice makes consumers read it twice. Names are checked against the
+	// manifest, so this also avoids clashes with feedx's "data-0-<version>" names.
+	// Ends after at most len(m.Files)+1 tries.
+	base := "data-" + strconv.FormatInt(wopt.Version, 10)
+	ext := formatExt + compressionSuffix
+	name := base + ext
+	for n := 1; slices.Contains(m.Files, name); n++ {
+		name = base + "-" + strconv.Itoa(n) + ext
+	}
+	return name
 }

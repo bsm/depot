@@ -2,7 +2,6 @@ package depot
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/bsm/bfs"
@@ -92,7 +91,7 @@ func ProduceIncremental[T any](ctx context.Context, url string, version int64, r
 	}
 
 	wopt := cfg.writerOptions(version)
-	fname := newDataFileName(wopt)
+	fname := mft.newDataFileName(wopt)
 
 	dataObj := bfs.NewObjectFromBucket(bucket, fname)
 	defer dataObj.Close()
@@ -111,11 +110,7 @@ func ProduceIncremental[T any](ctx context.Context, url string, version int64, r
 		return nil, err
 	}
 
-	// a forced re-produce of the same version rewrote an existing file; listing
-	// it twice would make consumers read its items twice
-	if !slices.Contains(mft.Files, fname) {
-		mft.Files = append(mft.Files, fname)
-	}
+	mft.Files = append(mft.Files, fname)
 	mft.Version = version
 	if err := writeManifest(ctx, obj, mft, version); err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package depot_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"testing"
 	"time"
 
@@ -210,5 +211,69 @@ func TestSubscribe_DeferredInitialSyncIsImmediate(t *testing.T) {
 	}
 	if exp, got := 2, len(sub.Load()); exp != got {
 		t.Errorf("expected %v, got %v", exp, got)
+	}
+}
+
+// A slow refresh of an older version that finishes after a newer one must not
+// replace the newer snapshot.
+func TestSubscribe_staleRefresh(t *testing.T) {
+	const url = "mem://subscribe-stale/file.json"
+	resetStore("subscribe-stale") // the test needs to start at version 1
+	if err := seedStore(url, 1, 1); err != nil {
+		t.Fatal("unexpected error", err)
+	}
+
+	// the build of version 2 (two items) pauses until released
+	building, release := make(chan struct{}), make(chan struct{})
+	build := func(rows iter.Seq[*message]) ([]*message, error) {
+		msgs, err := collectMessages(rows)
+		if len(msgs) == 2 {
+			close(building)
+			<-release
+		}
+		return msgs, err
+	}
+
+	sub, err := depot.Subscribe(t.Context(), url, 0, build)
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	defer func() { _ = sub.Close() }()
+
+	if err := seedStore(url, 2, 2); err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	stale := make(chan error, 1)
+	go func() {
+		_, err := sub.Refresh(t.Context())
+		stale <- err
+	}()
+	select {
+	case <-building:
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh of version 2 did not start")
+	}
+
+	if err := seedStore(url, 3, 3); err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	if _, err := sub.Refresh(t.Context()); err != nil {
+		t.Fatal("unexpected error", err)
+	}
+
+	close(release)
+	select {
+	case err := <-stale:
+		if err != nil {
+			t.Fatal("unexpected error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh of version 2 did not finish")
+	}
+	if exp, got := int64(3), sub.Version(); exp != got {
+		t.Errorf("expected version %v, got %v", exp, got)
+	}
+	if exp, got := 3, len(sub.Load()); exp != got {
+		t.Errorf("expected %v messages, got %v", exp, got)
 	}
 }
