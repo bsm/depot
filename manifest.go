@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"strings"
 
 	"github.com/bsm/bfs"
 )
 
 // manifest holds the current feed status.
-// the current manifest is consumed before each push and a new manifest written after each push.
+// The current manifest is consumed before each push and a new manifest written after each push.
+//
+// feedx manifests also carry a "generation" counter. feedx never incremented
+// it, so depot ignores it on read and does not write it.
 type manifest struct {
 	// Version holds the most recent version of the records included in Files.
 	Version int64 `json:"version"`
-	// Generation is a incrementing counter for use in file compaction.
-	Generation int `json:"generation"`
-	// Files holds a set of data files
+	// Files holds the data files, in write order.
 	Files []string `json:"files"`
 }
 
@@ -40,9 +40,7 @@ func loadManifest(ctx context.Context, obj *bfs.Object) (*manifest, error) {
 	return m, nil
 }
 
-func (m *manifest) newDataFileName(wopt *WriterOptions) string {
-	version := strings.ReplaceAll(strconv.FormatInt(wopt.Version, 10), ".", "")
-
+func newDataFileName(wopt *WriterOptions) string {
 	formatExt := ".json"
 	switch wopt.Format {
 	case ProtobufFormat:
@@ -61,5 +59,7 @@ func (m *manifest) newDataFileName(wopt *WriterOptions) string {
 		compressionSuffix = ".zst"
 	}
 
-	return "data-" + strconv.Itoa(m.Generation) + "-" + version + formatExt + compressionSuffix
+	// The name depends only on the version, so a forced re-produce of the same
+	// version replaces its data file instead of adding a second one.
+	return "data-" + strconv.FormatInt(wopt.Version, 10) + formatExt + compressionSuffix
 }

@@ -9,7 +9,7 @@ A producer deposits a versioned snapshot of a dataset into a shared location
 (S3, GCS, a local directory, ...). Consumers poll that location and collect the
 latest snapshot into whatever in-memory shape they need, refreshing in the
 background. Producer and consumer never talk directly and don't need to be up at
-the same time — the store sits between them.
+the same time: the store sits between them.
 
 `depot` handles the versioning, skip-when-unchanged, encoding, compression and
 the refresh loop. You provide the data and the shape you want it in.
@@ -20,7 +20,7 @@ the refresh loop. You provide the data and the shape you want it in.
 go get github.com/bsm/depot
 ```
 
-Storage backends come from [bfs](https://github.com/bsm/bfs) — import the driver
+Storage backends come from [bfs](https://github.com/bsm/bfs). Import the driver
 for the scheme you use, e.g. `github.com/bsm/bfs/bfss3` for `s3://` or
 `github.com/bsm/bfs/bfsfs` for `file://`.
 
@@ -51,7 +51,7 @@ status, err := depot.Produce(ctx, "s3://my-bucket/users.ndjson.gz", version,
 ## Subscribe
 
 Collect the snapshot once, then keep it fresh in the background. `build` turns
-the decoded item stream into whatever you want `Load` to return — a slice, a
+the decoded item stream into whatever you want `Load` to return: a slice, a
 lookup map, a prebuilt index.
 
 ```go
@@ -72,30 +72,18 @@ defer sub.Close()
 user := sub.Load()[42]
 ```
 
-`Load` returns the last successfully built snapshot, swapped atomically on each
-refresh. A refresh that finds no new version is skipped; one that fails to
-decode or build leaves the previous snapshot in place. Register `OnSync` to
-instrument background refreshes (each `Status` carries a `Start` time) and
-`OnError` to observe background failures. Pass `every == 0` for a one-shot load
-with no background loop, and call `Refresh` to poll on demand.
-
-The `ctx` passed to `Subscribe` applies to the initial load only; the
-subscription's lifecycle belongs to `Close`, which stops the refresh loop and
-aborts any in-flight sync — so shutdown (e.g. on SIGTERM) is never blocked by
-a slow read. Cancelling the `ctx` passed to `Produce` aborts between items and
-a partial snapshot is never committed.
+How refreshes, errors, cancellation and `Close` behave is documented on
+`Subscribe`, `Subscription` and the options in the
+[package docs](https://pkg.go.dev/github.com/bsm/depot).
 
 ## Versions & skipping
 
-Each snapshot carries its `version` in object metadata. Producers skip writing
-when the remote version is already current; consumers skip reading when they
-already hold it. `Force()` overrides the producer check.
+Each snapshot carries a version, and unchanged snapshots are not written or
+read again. See the [package docs](https://pkg.go.dev/github.com/bsm/depot)
+for how this works.
 
-> **Backends must persist metadata.** The version is stored as an object
-> metadata header, so skipping only works on backends that round-trip metadata
-> (S3, GCS, in-memory). The local `file://` backend does **not** persist
-> metadata: produce/subscribe stay correct but never skip — every run
-> re-transfers the full snapshot.
+> **Note:** skipping needs a backend that keeps object metadata. On the local
+> `file://` backend every run moves the full snapshot.
 
 ## Formats & compression
 
@@ -215,15 +203,15 @@ snapshot instead) and poll `Ready()` to tell when a snapshot is available.
 
 ### Notes
 
-- `Subscribe` yields `*T` (freshly allocated per item), not `T` — required for
+- `Subscribe` yields `*T` (freshly allocated per item), not `T`. This is required for
   protobuf messages, which must not be copied by value.
-- The metadata header is renamed `X-Feedx-Version` → `X-Depot-Version`. depot
+- The metadata header is renamed `X-Feedx-Version` to `X-Depot-Version`. depot
   writes the new header but falls back to reading the legacy one, so a depot
-  consumer tracks versions seamlessly on a feed still produced by feedx — no
+  consumer keeps tracking versions on a feed still produced by feedx, with no
   re-read on cutover.
 - `Reader`, `Writer`, `MultiReader`, `Format` and `Compression` are unchanged
   and still available for lower-level use (see `Rows` for a typed reader).
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0, see [LICENSE](LICENSE).

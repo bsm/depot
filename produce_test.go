@@ -96,6 +96,35 @@ func TestProduce_force(t *testing.T) {
 	})
 }
 
+// An empty snapshot must still be published, or its version never reaches
+// consumers and every run writes again.
+func TestProduce_empty(t *testing.T) {
+	const url = "mem://produce-empty/file.json"
+
+	none := func(func(*testdata.MockMessage) error) error { return nil }
+	if _, err := depot.Produce(t.Context(), url, 5, none); err != nil {
+		t.Fatal("unexpected error", err)
+	}
+
+	status, err := depot.Produce(t.Context(), url, 5, none)
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	checkStatus(t, status, &depot.Status{LocalVersion: 5, RemoteVersion: 5, Skipped: true})
+
+	sub, err := depot.Subscribe(t.Context(), url, 0, collectMessages)
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	defer func() { _ = sub.Close() }()
+	if got := sub.Version(); got != 5 {
+		t.Errorf("expected version 5, got %d", got)
+	}
+	if got := sub.Load(); len(got) != 0 {
+		t.Errorf("expected no messages, got %d", len(got))
+	}
+}
+
 func testProduce(t *testing.T, url string, version int64, opts []depot.Option, exp *depot.Status) {
 	t.Helper()
 
@@ -134,9 +163,38 @@ func TestProduceIncremental(t *testing.T) {
 		t.Fatal("unexpected error", err)
 	} else if exp := (&depot.Manifest{
 		Version: 134,
-		Files:   []string{"data-0-101.json", "data-0-134.json"},
+		Files:   []string{"data-101.json", "data-134.json"},
 	}); !reflect.DeepEqual(exp, mft) {
 		t.Errorf("expected %#v, got %#v", exp, mft)
+	}
+}
+
+// A forced re-produce of the same version must not list its data file twice,
+// or consumers read its items twice.
+func TestProduceIncremental_force(t *testing.T) {
+	const url = "mem://produce-incremental-force/"
+
+	three := func(_ int64, emit func(*testdata.MockMessage) error) error {
+		for range 3 {
+			if err := emit(seed()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for range 2 {
+		if _, err := depot.ProduceIncremental(t.Context(), url, 7, three, depot.Force()); err != nil {
+			t.Fatal("unexpected error", err)
+		}
+	}
+
+	sub, err := depot.Subscribe(t.Context(), url, 0, collectMessages, depot.WithIncremental())
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	defer func() { _ = sub.Close() }()
+	if got := len(sub.Load()); got != 3 {
+		t.Errorf("expected 3 messages, got %d", got)
 	}
 }
 

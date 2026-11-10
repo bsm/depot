@@ -69,14 +69,14 @@ func (r *Reader) Read(p []byte) (int, error) {
 		if more, err := r.nextRemote(); err != nil {
 			return n, err
 		} else if more {
-			return n, nil // dont return EOF until all remotes read
+			return n, nil // don't return EOF until all remotes read
 		}
 	}
 	return n, err
 }
 
 // Decode decodes the next formatted value from the feed.
-// At end of feed, Read returns io.EOF.
+// At end of feed, Decode returns io.EOF.
 func (r *Reader) Decode(v any) error {
 	if !r.ensureCurrent() {
 		return io.EOF

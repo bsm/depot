@@ -78,6 +78,7 @@ type Subscription[S any] struct {
 	bucket bfs.Bucket
 
 	sync     func(context.Context) (*Status, error)
+	storeMu  sync.Mutex // orders snapshot+version stores, see consumeInto
 	snapshot atomic.Pointer[S]
 	version  atomic.Int64
 	ready    atomic.Bool
@@ -214,6 +215,16 @@ func consumeInto[T, S any](ctx context.Context, sub *Subscription[S], cfg *confi
 	}
 
 	status.NumItems = reader.NumRead()
+
+	// A manual Refresh can run next to the background loop. Without this check
+	// a slow sync of an older version could finish last and replace a newer
+	// snapshot. The lock keeps snapshot and version in step.
+	sub.storeMu.Lock()
+	defer sub.storeMu.Unlock()
+	if remoteVersion < sub.version.Load() {
+		status.Skipped = true
+		return status, nil
+	}
 	sub.snapshot.Store(&snap)
 	sub.version.Store(remoteVersion)
 	sub.ready.Store(true)

@@ -105,7 +105,7 @@ func TestSubscribe(t *testing.T) {
 		defer func() { _ = sub.Close() }()
 
 		// the remote is unchanged since the initial load, so the first background
-		// refresh is a skip — and it carries a populated Start
+		// refresh is a skip, and it carries a populated Start
 		select {
 		case st := <-synced:
 			if !st.Skipped {
